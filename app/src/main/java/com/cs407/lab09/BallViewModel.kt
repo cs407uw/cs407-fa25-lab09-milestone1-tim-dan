@@ -13,6 +13,8 @@ class BallViewModel : ViewModel() {
 
     private var ball: Ball? = null
     private var lastTimestamp: Long = 0L
+    private var lastXAcc: Float = 0f
+    private var lastYAcc: Float = 0f
 
     // Expose the ball's position as a StateFlow
     private val _ballPosition = MutableStateFlow(Offset.Zero)
@@ -45,15 +47,31 @@ class BallViewModel : ViewModel() {
                 // Update the ball's position and velocity
                 // Sensor coordinate system: x right, y up (out of device), z out of front
                 // Screen coordinate system: x right, y down
-                // So we need to invert the y-axis: sensor y (up) -> screen y (down)
-                // The sensor gives acceleration opposite to gravity, so we use it directly
-                val xAcc = event.values[0]  // x-axis: same direction
-                val yAcc = -event.values[1] // y-axis: inverted (sensor up -> screen down)
-                
+                // The TYPE_GRAVITY sensor gives the gravity vector in device coordinates
+                // When device is upright in portrait, gravity points down (toward bottom of screen)
+                // The sensor Y axis already points in the direction we need for screen coordinates
+                // So we use the sensor Y value directly (no inversion needed)
+                val xAcc = event.values[0]  // x-axis: same direction in both systems
+                val yAcc = event.values[1]  // y-axis: use sensor y directly (sensor y already matches screen y direction)
+
+                // Store the current acceleration values
+                lastXAcc = xAcc
+                lastYAcc = yAcc
+
                 currentBall.updatePositionAndVelocity(xAcc = xAcc, yAcc = yAcc, dT = dT)
 
                 // Update the StateFlow to notify the UI
                 _ballPosition.update { Offset(currentBall.posX, currentBall.posY) }
+            } else {
+                // First event after reset - capture the current phone orientation
+                // Convert sensor coordinates to screen coordinates
+                // Use sensor values directly (sensor y already matches screen y direction)
+                val xAcc = event.values[0]  // x-axis: same direction
+                val yAcc = event.values[1]  // y-axis: use sensor y directly
+                lastXAcc = xAcc
+                lastYAcc = yAcc
+                // Initialize the ball with current orientation so it starts moving correctly
+                currentBall.initializeAcceleration(xAcc, yAcc)
             }
 
             // Update the lastTimestamp
@@ -66,8 +84,15 @@ class BallViewModel : ViewModel() {
 
         ball?.let {
             _ballPosition.value = Offset(it.posX, it.posY)
+            // Initialize the ball with the current phone orientation if we have it
+            // This ensures the ball will start moving in the correct direction immediately
+            if (lastTimestamp != 0L) {
+                it.initializeAcceleration(lastXAcc, lastYAcc)
+            }
         }
 
+        // Reset timestamp so next sensor event will initialize if needed
+        // but keep the last acceleration values so we can use them
         lastTimestamp = 0L
     }
 }
